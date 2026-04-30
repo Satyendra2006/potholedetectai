@@ -5,22 +5,14 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { 
-  Plus, 
   Upload, 
   Activity, 
-  Database, 
-  Cpu, 
   Play, 
-  Save, 
-  Trash2, 
   AlertTriangle, 
-  CheckCircle2, 
-  BarChart3,
   MessageSquare,
-  ChevronRight,
-  Code2,
-  FileJson,
-  Maximize2
+  Maximize2,
+  Key,
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -42,7 +34,7 @@ import {
   AreaChart,
   Area
 } from 'recharts';
-import { detectPotholes, askMentor } from './lib/gemini';
+import { detectPotholes, askMentor, saveApiKey, getStoredApiKey } from './lib/gemini';
 
 // --- Types ---
 interface Pothole {
@@ -76,6 +68,10 @@ export default function App() {
     { role: 'ai', text: "Hello! I'm your YOLO Pothole mentor. How can I help you with your segmentation model today?" }
   ]);
   const [userInput, setUserInput] = useState('');
+  const [showApiModal, setShowApiModal] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [apiKeySet, setApiKeySet] = useState(!!getStoredApiKey());
+  const [inferenceError, setInferenceError] = useState<string | null>(null);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -93,17 +89,37 @@ export default function App() {
     }
   };
 
-  // Run analysis (Simulation via Gemini)
+  // Run analysis via Gemini
   const runAnalysis = async () => {
     if (!selectedFile) return;
+    if (!getStoredApiKey()) {
+      setShowApiModal(true);
+      return;
+    }
     setIsAnalyzing(true);
-    
-    // Extract base64
-    const base64 = selectedFile.split(',')[1];
-    const detection = await detectPotholes(base64);
-    
-    setResult(detection);
-    setIsAnalyzing(false);
+    setInferenceError(null);
+    try {
+      const base64 = selectedFile.split(',')[1];
+      const detection = await detectPotholes(base64);
+      setResult(detection);
+    } catch (err: any) {
+      if (err.message === 'NO_API_KEY') {
+        setShowApiModal(true);
+      } else {
+        setInferenceError('API error: ' + (err.message || 'Check your API key and try again.'));
+      }
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const handleSaveApiKey = () => {
+    if (apiKeyInput.trim()) {
+      saveApiKey(apiKeyInput.trim());
+      setApiKeySet(true);
+      setShowApiModal(false);
+      setApiKeyInput('');
+    }
   };
 
   // Draw detections on canvas
@@ -151,16 +167,64 @@ export default function App() {
 
   const handleSendMessage = async () => {
     if (!userInput.trim()) return;
+    if (!getStoredApiKey()) {
+      setShowApiModal(true);
+      return;
+    }
     const msg = userInput;
     setUserInput('');
     setChatMessages(prev => [...prev, { role: 'user', text: msg }]);
-    
-    const response = await askMentor(msg);
-    setChatMessages(prev => [...prev, { role: 'ai', text: response || "" }]);
+    try {
+      const response = await askMentor(msg);
+      setChatMessages(prev => [...prev, { role: 'ai', text: response || '' }]);
+    } catch {
+      setChatMessages(prev => [...prev, { role: 'ai', text: 'Error: Could not connect. Check your API key.' }]);
+    }
   };
 
   return (
     <div className="min-h-screen bg-[#E4E3E0] text-[#141414] font-sans selection:bg-[#141414] selection:text-[#E4E3E0]">
+
+      {/* API Key Modal */}
+      {showApiModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-[#E4E3E0] border border-[#141414] w-full max-w-md mx-4 p-0 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-[#141414] px-5 py-3">
+              <div className="flex items-center gap-2">
+                <Key className="w-4 h-4" />
+                <span className="font-mono text-sm uppercase font-bold tracking-tight">API_Key_Config</span>
+              </div>
+              <button onClick={() => setShowApiModal(false)} className="opacity-50 hover:opacity-100 transition-opacity">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="font-mono text-xs opacity-70 leading-relaxed">
+                A <strong>Gemini API key</strong> is required to run inference. Get one free at{' '}
+                <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="underline">aistudio.google.com/apikey</a>.
+                Your key is stored only in your browser.
+              </p>
+              <input
+                type="password"
+                placeholder="Paste your Gemini API key here..."
+                className="w-full bg-transparent border border-[#141414] font-mono text-xs px-3 py-2 focus:outline-none focus:ring-1 focus:ring-[#141414] placeholder:opacity-30"
+                value={apiKeyInput}
+                onChange={e => setApiKeyInput(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleSaveApiKey()}
+                autoFocus
+              />
+              <button
+                onClick={handleSaveApiKey}
+                disabled={!apiKeyInput.trim()}
+                className="w-full bg-[#141414] text-[#E4E3E0] font-mono text-xs uppercase tracking-widest py-2 hover:opacity-80 disabled:opacity-30 transition-opacity"
+              >
+                Save & Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Sidebar / Navigation */}
       <nav className="fixed top-0 left-0 w-full h-16 border-b border-[#141414] bg-[#E4E3E0] z-50 flex items-center justify-between px-6">
         <div className="flex items-center gap-3">
@@ -180,7 +244,18 @@ export default function App() {
             <button onClick={() => setActiveTab('mentor')} className={`hover:underline ${activeTab === 'mentor' ? 'underline' : ''}`}>[03] Mentor AI</button>
           </div>
           <div className="flex items-center gap-2">
-            <Badge variant="outline" className="border-[#141414] font-mono text-[10px] rounded-none px-2 py-0.5">EPOCHS: 100/100</Badge>
+            <button
+              onClick={() => setShowApiModal(true)}
+              title={apiKeySet ? 'API Key configured — click to change' : 'Set API Key'}
+              className={`flex items-center gap-1.5 border font-mono text-[10px] rounded-none px-2 py-0.5 uppercase transition-colors ${
+                apiKeySet
+                  ? 'border-green-700 text-green-700 bg-green-50'
+                  : 'border-red-600 text-red-600 bg-red-50 animate-pulse'
+              }`}
+            >
+              <Key className="w-3 h-3" />
+              {apiKeySet ? 'Key: SET' : 'Set API Key'}
+            </button>
             <Badge variant="outline" className="border-[#141414] font-mono text-[10px] rounded-none bg-[#141414] text-[#E4E3E0] px-2 py-0.5">mAP50: 0.852</Badge>
           </div>
         </div>
@@ -294,8 +369,8 @@ export default function App() {
                   <ScrollArea className="h-[200px] font-mono text-[11px] p-4">
                     <div className="space-y-1">
                       <p className="text-blue-700 font-bold">[SYS] Initializing Vision Engine...</p>
-                      <p className="text-blue-700 font-bold">[SYS] Model loaded: yolov8n-seg.pt (nano)</p>
-                      <p>[LOG] Waiting for video signal...</p>
+                      <p className="text-blue-700 font-bold">[SYS] Model: gemini-2.0-flash (vision)</p>
+                      <p>[LOG] {apiKeySet ? 'API key configured. Ready.' : 'WARNING: No API key set. Click "Set API Key" to configure.'}</p>
                       {result && (
                         <>
                           <p className="text-green-700 font-bold">[INF] Inference cycle complete.</p>
@@ -303,7 +378,8 @@ export default function App() {
                           <p className="italic text-gray-700 mt-2">Summary: {result.damage_summary}</p>
                         </>
                       )}
-                      {isAnalyzing && <p className="animate-pulse">_Running instance segmentation...</p>}
+                      {inferenceError && <p className="text-red-600 font-bold">[ERR] {inferenceError}</p>}
+                      {isAnalyzing && <p className="animate-pulse text-yellow-700">[INF] Running Gemini vision analysis...</p>}
                     </div>
                   </ScrollArea>
                 </CardContent>
