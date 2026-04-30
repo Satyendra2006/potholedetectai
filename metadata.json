@@ -1,0 +1,8 @@
+{
+  "name": "PotholeDetectAI",
+  "description": "Real-time road damage instance segmentation and analysis dashboard.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": []
+}
